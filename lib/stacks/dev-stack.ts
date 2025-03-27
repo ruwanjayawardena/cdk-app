@@ -34,7 +34,7 @@ export class DevStack extends cdk.Stack {
     const helloFunction = new lambda.Function(this, 'HelloHandler', {
       runtime: lambda.Runtime.NODEJS_20_X,
       code: lambda.Code.fromAsset('lambda'),
-      handler: 'api-handler.main',
+      handler: 'handler.main',
       environment: {
         ENV: 'dev',
       },
