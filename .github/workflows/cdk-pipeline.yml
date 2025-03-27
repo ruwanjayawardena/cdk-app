@@ -1,51 +1,3 @@
-# name: CDK Pipeline
-
-# on:
-#   push:
-#     branches: [main]
-#   pull_request:
-#     branches: [main]
-
-# jobs:
-#   deploy:
-#     runs-on: ubuntu-latest
-    
-#     steps:
-#       - uses: actions/checkout@v3
-      
-#       - name: Use Node.js
-#         uses: actions/setup-node@v3
-#         with:
-#           node-version: '20'
-          
-#       - name: Install dependencies
-#         run: npm ci
-        
-#       - name: Configure AWS Credentials
-#         uses: aws-actions/configure-aws-credentials@v2
-#         with:
-#           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-#           aws-region: us-east-1
-          
-#       - name: Bootstrap CDK
-#         run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1
-#         env:
-#           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-
-#       - name: CDK Synth
-#         run: npx cdk synth
-        
-#       - name: Deploy Dev Stack
-#         if: github.event_name == 'push'
-#         run: npx cdk deploy DevStack --require-approval never
-        
-#       - name: Deploy Prod Stack
-#         if: github.event_name == 'push'
-#         run: npx cdk deploy ProdStack --require-approval never
-
-
-
 name: CDK Pipeline
 
 on:
@@ -53,18 +5,47 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:  # Manual trigger for destroy
     inputs:
       destroy:
-        description: 'Set to "true" to destroy stacks'
+        description: 'Set to "true" to destroy all stacks'
         required: false
         default: 'false'
 
-jobs: 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.inputs.destroy != 'true'  # Runs only for push/pull_request
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Bootstrap CDK
+        run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      - name: CDK Synth
+        run: npx cdk synth
+      - name: Deploy Dev Stack
+        if: github.event_name == 'push'
+        run: npx cdk deploy DevStack --require-approval never
+      - name: Deploy Prod Stack
+        if: github.event_name == 'push'
+        run: npx cdk deploy ProdStack --require-approval never
 
   destroy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.inputs.destroy == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.inputs.destroy == 'true'  # Runs only when destroy is true
     steps:
       - uses: actions/checkout@v3
       - name: Use Node.js
@@ -80,6 +61,23 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
       - name: Destroy Dev Stack
-        run: npx cdk destroy DevStack --force
+        run: npx cdk destroy DevStack --force || true  # --force skips prompt, || true ignores if already deleted
       - name: Destroy Prod Stack
-        run: npx cdk destroy ProdStack --force
+        run: npx cdk destroy ProdStack --force || true
+      - name: Install AWS CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli
+      - name: Delete CDKToolkit Stack
+        run: |
+          aws cloudformation delete-stack --stack-name CDKToolkit --region us-east-1
+          aws cloudformation wait stack-delete-complete --stack-name CDKToolkit --region us-east-1 || true
+      - name: Clean Up S3 Buckets
+        run: |
+          BUCKET=$(aws s3 ls | grep "cdk-hnb659fds-assets-${{ secrets.AWS_ACCOUNT_ID }}-us-east-1" | awk '{print $3}' || true)
+          if [ -n "$BUCKET" ]; then
+            aws s3 rm s3://$BUCKET --recursive --region us-east-1
+            aws s3 rb s3://$BUCKET --region us-east-1
+          fi
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
